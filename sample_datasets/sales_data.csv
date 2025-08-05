@@ -1,0 +1,16 @@
+date,product,quantity,price,region,category,revenue
+2024-01-01,Widget A,100,29.99,North,Electronics,2999.00
+2024-01-02,Widget B,150,39.99,South,Electronics,5998.50
+2024-01-03,Gadget X,75,49.99,East,Accessories,3749.25
+2024-01-04,Gadget Y,200,19.99,West,Accessories,3998.00
+2024-01-05,Widget A,125,29.99,North,Electronics,3748.75
+2024-01-06,Widget C,90,59.99,South,Electronics,5399.10
+2024-01-07,Gadget X,110,49.99,North,Accessories,5498.90
+2024-01-08,Widget B,80,39.99,East,Electronics,3199.20
+2024-01-09,Gadget Y,175,19.99,West,Accessories,3498.25
+2024-01-10,Widget A,95,29.99,South,Electronics,2849.05
+2024-01-11,Widget C,120,59.99,East,Electronics,7198.80
+2024-01-12,Gadget X,85,49.99,West,Accessories,4249.15
+2024-01-13,Widget B,160,39.99,North,Electronics,6398.40
+2024-01-14,Gadget Y,140,19.99,South,Accessories,2798.60
+2024-01-15,Widget A,105,29.99,East,Electronics,3148.95
