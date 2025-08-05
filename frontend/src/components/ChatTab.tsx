@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { api } from '../lib/api';
-import { Message } from '../types';
+import { Message } from '../types/index';
 
 export function ChatTab({ projectId }: { projectId: string }) {
   const [messages, setMessages] = useState<Message[]>([

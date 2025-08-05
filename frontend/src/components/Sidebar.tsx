@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
-import { Project } from '../types';
+import { Project } from '../types/index';
 
 interface SidebarProps {
   collapsed: boolean;

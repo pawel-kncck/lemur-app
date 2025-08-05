@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**IMPORTANT** Remember to follow Git Commit Guidelines **IMPORTANT**
+
 ## Project Overview
 
 Lemur is a data analysis chatbot application with a React frontend and FastAPI backend. It allows users to upload CSV files, provide business context, and chat with an AI assistant about their data.
@@ -9,6 +11,7 @@ Lemur is a data analysis chatbot application with a React frontend and FastAPI b
 ## Architecture
 
 - **Frontend**: React + TypeScript + Vite
+
   - Located in `/frontend`
   - Uses Vite dev server on port 5173 (default)
   - No component library or API integration yet (plain React)
@@ -22,6 +25,7 @@ Lemur is a data analysis chatbot application with a React frontend and FastAPI b
 ## Common Commands
 
 ### Frontend Development
+
 ```bash
 cd frontend
 npm install          # Install dependencies
@@ -32,6 +36,7 @@ npm run preview      # Preview production build
 ```
 
 ### Backend Development
+
 ```bash
 cd backend
 pip install -r requirements.txt    # Install dependencies
@@ -41,6 +46,7 @@ uvicorn main:app --reload         # Run with auto-reload
 ```
 
 ### Docker Development
+
 ```bash
 # Backend
 cd backend
@@ -65,14 +71,17 @@ The backend provides these REST endpoints:
 ## Environment Variables
 
 ### Backend
+
 - `OPENAI_API_KEY` - Required for AI chat functionality
 
 ### Frontend
+
 - `VITE_API_URL` - Backend API URL (defaults to http://localhost:8000)
 
 ## Current Implementation Status
 
 Based on the implementation plan, the project is in early stages:
+
 - Backend API is implemented with core endpoints
 - Frontend has basic React setup but no UI components yet
 - No authentication system
@@ -90,6 +99,7 @@ Based on the implementation plan, the project is in early stages:
 ## Next Steps (from implementation plan)
 
 The implementation plan suggests these components need to be built:
+
 - Frontend UI components (Sidebar, DataStudioTab, ContextTab, ChatTab)
 - API integration layer in frontend
 - Docker Compose setup for easier development

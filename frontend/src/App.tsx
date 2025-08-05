@@ -4,7 +4,7 @@ import { Sidebar } from './components/Sidebar';
 import { DataStudioTab } from './components/DataStudioTab';
 import { ContextTab } from './components/ContextTab';
 import { ChatTab } from './components/ChatTab';
-import { Project } from './types';
+import { Project } from './types/index';
 
 type TabType = 'data' | 'context' | 'chat';
 
