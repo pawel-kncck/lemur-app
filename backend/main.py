@@ -230,6 +230,26 @@ Basic Statistics:
         """
         system_context += data_info
 
+    # Check for mock mode
+    if os.getenv("MOCK_OPENAI", "false").lower() == "true":
+        logger.info("📝 Using mock mode for testing")
+        mock_response = f"""I'm analyzing your data in mock mode. Here's what I can tell you:
+
+Based on your question: "{message.message}"
+
+{f"Your data file '{project['file_name']}' contains {STORAGE['files'][project['file_id']]['rows']} rows and {len(project['file_columns'])} columns." if project.get('file_id') else "No data file has been uploaded yet."}
+
+{f"Columns in your data: {', '.join(project['file_columns'])}" if project.get('file_columns') else ""}
+
+{f"Context provided: {STORAGE['contexts'].get(project_id, 'No context provided')[:100]}..." if project_id in STORAGE['contexts'] else "No business context has been provided."}
+
+This is a mock response for testing purposes. To get real AI analysis, please configure a valid OpenAI API key."""
+        
+        return {
+            "response": mock_response,
+            "timestamp": datetime.now().isoformat()
+        }
+    
     # Check if OpenAI client is available
     if not client:
         logger.error("OpenAI client not initialized - API key missing or invalid")
@@ -268,11 +288,14 @@ Basic Statistics:
         logger.exception("Full error details:")
         
         # Provide more helpful error messages
-        if "api_key" in str(e).lower():
+        error_str = str(e).lower()
+        if "billing_not_active" in error_str:
+            error_msg = "OpenAI account is not active. Please add billing details at https://platform.openai.com/account/billing"
+        elif "api_key" in error_str:
             error_msg = "API key error. Please check that your OpenAI API key is valid."
-        elif "rate_limit" in str(e).lower():
+        elif "rate_limit" in error_str:
             error_msg = "Rate limit exceeded. Please wait a moment and try again."
-        elif "model" in str(e).lower():
+        elif "model" in error_str:
             error_msg = "Model access error. You may not have access to GPT-4. Try updating the model to 'gpt-3.5-turbo'."
         else:
             error_msg = f"Error: {str(e)}"
