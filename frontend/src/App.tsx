@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import './App.css';
 import { Sidebar, DataStudioTab, ContextTab, ChatTab } from './components';
-import { Project } from './types/index';
+import { Project } from './types/types';
 
 type TabType = 'data' | 'context' | 'chat';
 

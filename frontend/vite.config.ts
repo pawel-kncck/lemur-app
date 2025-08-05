@@ -16,5 +16,6 @@ export default defineConfig({
       '@lib': resolve(__dirname, './src/lib'),
       '@types': resolve(__dirname, './src/types'),
     },
+    extensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],
   },
 })

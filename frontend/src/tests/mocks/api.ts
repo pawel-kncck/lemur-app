@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import { Project, FileUploadResponse, ChatResponse } from '../../types/index';
+import { Project, FileUploadResponse, ChatResponse } from '../../types/types';
 
 export const mockProject: Project = {
   id: 'test-project-123',

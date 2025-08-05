@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { api } from '../lib/api';
-import { UploadedFile } from '../types/index';
+import { UploadedFile } from '../types/types';
 
 export function DataStudioTab({ projectId }: { projectId: string }) {
   const [files, setFiles] = useState<UploadedFile[]>([]);
