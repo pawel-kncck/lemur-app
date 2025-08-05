@@ -4,13 +4,18 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, Dict, List
 import pandas as pd
-import openai
+from openai import OpenAI
 import json
 import uuid
 import io
 import os
 from datetime import datetime
 import asyncio
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Initialize FastAPI
 app = FastAPI()
@@ -25,7 +30,18 @@ app.add_middleware(
 )
 
 # Configure OpenAI
-openai.api_key = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY or OPENAI_API_KEY == "sk-your-openai-api-key-here":
+    logger.warning("⚠️  OpenAI API key not configured properly! Chat features will not work.")
+    logger.warning("Please set OPENAI_API_KEY environment variable with a valid key.")
+    client = None
+else:
+    try:
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        logger.info("✅ OpenAI client initialized successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize OpenAI client: {e}")
+        client = None
 
 # In-memory storage (will reset on server restart)
 # In production, this would be a database
@@ -214,10 +230,23 @@ Basic Statistics:
         """
         system_context += data_info
 
+    # Check if OpenAI client is available
+    if not client:
+        logger.error("OpenAI client not initialized - API key missing or invalid")
+        return {
+            "response": "I'm sorry, but I can't process your request right now. The AI service is not properly configured. Please ensure the OpenAI API key is set correctly.",
+            "timestamp": datetime.now().isoformat()
+        }
+
     try:
-        # Call OpenAI API
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
+        logger.info(f"Sending chat request for project {project_id}")
+        logger.debug(f"Message: {message.message[:100]}...")
+        
+        # Call OpenAI API with new syntax
+        # Try GPT-4 first, fall back to GPT-3.5-turbo if needed
+        model = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")  # Default to gpt-3.5-turbo
+        response = client.chat.completions.create(
+            model=model,
             messages=[
                 {"role": "system", "content": system_context},
                 {"role": "user", "content": message.message}
@@ -227,6 +256,7 @@ Basic Statistics:
         )
 
         ai_response = response.choices[0].message.content
+        logger.info("✅ Successfully received response from OpenAI")
 
         return {
             "response": ai_response,
@@ -234,7 +264,20 @@ Basic Statistics:
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error calling AI: {str(e)}")
+        logger.error(f"❌ Error calling OpenAI API: {type(e).__name__}: {str(e)}")
+        logger.exception("Full error details:")
+        
+        # Provide more helpful error messages
+        if "api_key" in str(e).lower():
+            error_msg = "API key error. Please check that your OpenAI API key is valid."
+        elif "rate_limit" in str(e).lower():
+            error_msg = "Rate limit exceeded. Please wait a moment and try again."
+        elif "model" in str(e).lower():
+            error_msg = "Model access error. You may not have access to GPT-4. Try updating the model to 'gpt-3.5-turbo'."
+        else:
+            error_msg = f"Error: {str(e)}"
+            
+        raise HTTPException(status_code=500, detail=f"Error calling AI: {error_msg}")
 
 # Run the server
 if __name__ == "__main__":
