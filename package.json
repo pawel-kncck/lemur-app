@@ -1,0 +1,26 @@
+{
+  "name": "lemur-app",
+  "version": "1.0.0",
+  "description": "AI-powered data analysis chatbot",
+  "scripts": {
+    "start": "node start-app.js",
+    "start:simple": "node start.js",
+    "start:bash": "./start.sh",
+    "dev": "concurrently -n \"backend,frontend\" -c \"yellow,blue\" \"npm run backend\" \"npm run frontend\"",
+    "backend": "cd backend && python main.py",
+    "frontend": "cd frontend && npm run dev -- --host",
+    "install:all": "npm run install:backend && npm run install:frontend",
+    "install:backend": "cd backend && pip install -r requirements.txt",
+    "install:frontend": "cd frontend && npm install",
+    "test": "./test_all.sh",
+    "test:backend": "cd backend && ./run_tests.sh",
+    "test:frontend": "cd frontend && npm test",
+    "docker": "docker-compose up",
+    "docker:build": "docker-compose build",
+    "docker:down": "docker-compose down"
+  },
+  "keywords": ["ai", "data-analysis", "chatbot", "react", "fastapi"],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {}
+}

@@ -24,17 +24,34 @@ Lemur is a modern web application that allows users to upload CSV files, provide
 
 - Node.js 18+ and npm
 - Python 3.11+
-- OpenAI API key
+- OpenAI API key (optional, but required for AI chat features)
 
-### Local Development
+### 🚀 One-Command Start (Recommended)
 
-1. **Clone the repository**
-   ```bash
-   git clone <your-repo-url>
-   cd lemur-app
-   ```
+The easiest way to start Lemur is with a single command that:
+- Checks all prerequisites
+- Installs dependencies automatically
+- Starts both backend and frontend servers
+- Opens your browser automatically
 
-2. **Set up the backend**
+```bash
+# Clone and start
+git clone <your-repo-url>
+cd lemur-app
+
+# Start with one command (choose based on your system)
+npm start              # Recommended: Enhanced start with auto-browser open
+# OR
+./start.sh            # Alternative: Bash script for Mac/Linux
+# OR
+start.bat             # Alternative: Batch file for Windows
+```
+
+### Manual Setup (Alternative)
+
+If you prefer to set up manually or the auto-start doesn't work:
+
+1. **Set up the backend**
    ```bash
    cd backend
    cp .env.example .env
@@ -43,14 +60,14 @@ Lemur is a modern web application that allows users to upload CSV files, provide
    python main.py
    ```
 
-3. **Set up the frontend** (in a new terminal)
+2. **Set up the frontend** (in a new terminal)
    ```bash
    cd frontend
    npm install
    npm run dev
    ```
 
-4. **Access the application**
+3. **Access the application**
    - Frontend: http://localhost:5173
    - Backend API: http://localhost:8000
    - API Documentation: http://localhost:8000/docs
@@ -127,12 +144,22 @@ lemur-app/
 
 ### Common Commands
 
+**Quick Start Commands:**
+```bash
+npm start            # Start both servers with auto-browser open
+npm run start:simple # Start both servers (simple version)
+npm run start:bash   # Start using bash script
+npm run dev          # Start with colored output (no browser open)
+npm run docker       # Start using Docker Compose
+```
+
 **Backend:**
 ```bash
 cd backend
 pip install -r requirements.txt    # Install dependencies
 python main.py                     # Run development server
 uvicorn main:app --reload         # Run with auto-reload
+npm run backend                    # Run from root directory
 ```
 
 **Frontend:**
@@ -142,6 +169,14 @@ npm install          # Install dependencies
 npm run dev          # Start development server
 npm run build        # Build for production
 npm run lint         # Run ESLint
+npm run frontend     # Run from root directory
+```
+
+**Testing:**
+```bash
+npm test             # Run all tests
+npm run test:backend # Run backend tests only
+npm run test:frontend # Run frontend tests only
 ```
 
 ## Current Limitations
