@@ -4,7 +4,6 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, Dict, List
 import pandas as pd
-from openai import OpenAI
 import json
 import uuid
 import io
@@ -12,6 +11,10 @@ import os
 from datetime import datetime
 import asyncio
 import logging
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -31,16 +34,21 @@ app.add_middleware(
 
 # Configure OpenAI
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+logger.info(f"API Key loaded: {'Yes' if OPENAI_API_KEY else 'No'}")
+logger.info(f"API Key length: {len(OPENAI_API_KEY) if OPENAI_API_KEY else 0}")
+logger.info(f"API Key prefix: {OPENAI_API_KEY[:20]}..." if OPENAI_API_KEY and len(OPENAI_API_KEY) > 20 else "N/A")
+
 if not OPENAI_API_KEY or OPENAI_API_KEY == "sk-your-openai-api-key-here":
     logger.warning("⚠️  OpenAI API key not configured properly! Chat features will not work.")
     logger.warning("Please set OPENAI_API_KEY environment variable with a valid key.")
     client = None
 else:
     try:
+        from openai import OpenAI
         client = OpenAI(api_key=OPENAI_API_KEY)
         logger.info("✅ OpenAI client initialized successfully")
     except Exception as e:
-        logger.error(f"❌ Failed to initialize OpenAI client: {e}")
+        logger.error(f"❌ Failed to initialize OpenAI client: {type(e).__name__}: {e}")
         client = None
 
 # In-memory storage (will reset on server restart)
