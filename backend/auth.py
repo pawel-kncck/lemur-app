@@ -10,8 +10,37 @@ from fastapi.security import OAuth2PasswordBearer
 import os
 from pydantic import BaseModel
 
-# Configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
+# Security configuration with validation
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    # In development, generate a warning but allow a default
+    if os.getenv("ENVIRONMENT", "development") == "development":
+        import warnings
+        warnings.warn(
+            "SECRET_KEY not set! Using insecure default for development only. "
+            "Generate a secure key with: openssl rand -hex 32"
+        )
+        SECRET_KEY = "development-only-secret-key-do-not-use-in-production"
+    else:
+        raise ValueError(
+            "CRITICAL: SECRET_KEY must be set in environment variables for production. "
+            "Generate a secure key with: openssl rand -hex 32"
+        )
+
+# Validate key strength in production
+if os.getenv("ENVIRONMENT") == "production":
+    if len(SECRET_KEY) < 32:
+        raise ValueError(
+            "CRITICAL: SECRET_KEY must be at least 32 characters long for security. "
+            "Generate a secure key with: openssl rand -hex 32"
+        )
+    
+    if "your-secret-key" in SECRET_KEY.lower() or "change" in SECRET_KEY.lower() or "development" in SECRET_KEY.lower():
+        raise ValueError(
+            "CRITICAL: SECRET_KEY appears to be a placeholder or development value. "
+            "Please set a real secret key in your .env file for production."
+        )
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 7

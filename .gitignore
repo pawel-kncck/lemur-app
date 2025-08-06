@@ -49,3 +49,11 @@ htmlcov/
 *.temp
 tmp/
 temp/
+
+# Database files - NEVER commit these
+*.db
+*.sqlite
+*.sqlite3
+lemur.db
+backend/*.db
+backend/*.sqlite
