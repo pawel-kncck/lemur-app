@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { api } from '../lib/api';
 import { Message } from '../types/types';
+import { QuerySuggestions } from './QuerySuggestions';
 
 export function ChatTab({ projectId }: { projectId: string }) {
   const [messages, setMessages] = useState<Message[]>([
@@ -14,6 +15,7 @@ export function ChatTab({ projectId }: { projectId: string }) {
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -24,6 +26,36 @@ export function ChatTab({ projectId }: { projectId: string }) {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Fetch suggestions when component mounts or projectId changes
+  useEffect(() => {
+    const fetchSuggestions = async () => {
+      try {
+        const response = await api.getSuggestions(projectId);
+        setSuggestions(response.suggestions || []);
+      } catch (error) {
+        console.error('Failed to fetch suggestions:', error);
+      }
+    };
+
+    fetchSuggestions();
+  }, [projectId]);
+
+  // Refresh suggestions after each message exchange
+  const refreshSuggestions = async () => {
+    try {
+      const response = await api.getSuggestions(projectId);
+      setSuggestions(response.suggestions || []);
+    } catch (error) {
+      console.error('Failed to refresh suggestions:', error);
+    }
+  };
+
+  const handleSuggestionClick = (suggestion: string) => {
+    setInput(suggestion);
+    // Focus the input area
+    inputRef.current?.focus();
+  };
 
   const handleSendMessage = async () => {
     if (!input.trim() || loading) return;
@@ -50,6 +82,9 @@ export function ChatTab({ projectId }: { projectId: string }) {
       };
 
       setMessages((prev) => [...prev, aiMessage]);
+      
+      // Refresh suggestions after successful message
+      refreshSuggestions();
     } catch (error) {
       console.error('Failed to send message:', error);
 
@@ -136,6 +171,13 @@ export function ChatTab({ projectId }: { projectId: string }) {
 
       {/* Input Area */}
       <div style={{ padding: '20px', borderTop: '1px solid #333' }}>
+        {/* Query Suggestions */}
+        <QuerySuggestions
+          suggestions={suggestions}
+          onSuggestionClick={handleSuggestionClick}
+          disabled={loading}
+        />
+        
         <div style={{ display: 'flex', gap: '10px' }}>
           <textarea
             ref={inputRef}

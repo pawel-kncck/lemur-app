@@ -13,6 +13,7 @@ import asyncio
 import logging
 from dotenv import load_dotenv
 from data_profiler import DataProfiler
+from query_suggester import QuerySuggester
 
 # Load environment variables from .env file
 load_dotenv()
@@ -212,20 +213,28 @@ async def get_suggestions(project_id: str):
     
     if project.get("file_id"):
         file_data = STORAGE["files"][project["file_id"]]
+        df = file_data["dataframe"]
+        profile = file_data.get("profile", {})
+        context = STORAGE["contexts"].get(project_id)
         
-        # Use suggestions from the profile if available
-        if "profile" in file_data and "suggested_analyses" in file_data["profile"]:
-            suggestions = file_data["profile"]["suggested_analyses"]
-        else:
-            # Generate basic suggestions
-            df = file_data["dataframe"]
-            suggestions = [
-                "What is the overall summary of this data?",
-                f"Show me the first 10 rows",
-                f"How many unique values are in each column?",
-                "Which columns have missing values?",
-                "What are the data types of each column?"
-            ]
+        # Get chat history if available (for now, empty as we don't store it yet)
+        chat_history = []
+        
+        # Generate intelligent suggestions using QuerySuggester
+        suggestions = QuerySuggester.generate_suggestions(
+            df=df,
+            profile=profile,
+            context=context,
+            chat_history=chat_history,
+            max_suggestions=7
+        )
+    else:
+        # Default suggestions when no data is uploaded
+        suggestions = [
+            "Upload a CSV file to get started",
+            "What kind of data analysis do you need?",
+            "Tell me about your business context"
+        ]
     
     return {"suggestions": suggestions}
 

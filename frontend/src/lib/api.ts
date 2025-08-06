@@ -81,4 +81,9 @@ export const api = {
       body: JSON.stringify({ message }),
     });
   },
+
+  // Query Suggestions
+  getSuggestions: async (projectId: string) => {
+    return apiCall(`/api/projects/${projectId}/suggestions`);
+  },
 };
