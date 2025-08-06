@@ -14,6 +14,7 @@ import logging
 from dotenv import load_dotenv
 from data_profiler import DataProfiler
 from query_suggester import QuerySuggester
+from analysis_engine import AnalysisEngine
 
 # Load environment variables from .env file
 load_dotenv()
@@ -59,6 +60,7 @@ STORAGE = {
     "projects": {},  # project_id -> project_data
     "files": {},     # file_id -> file_content
     "contexts": {},  # project_id -> context
+    "code_history": {},  # project_id -> list of executed code blocks
 }
 
 # Pydantic models for request/response
@@ -355,8 +357,70 @@ This is a mock response for testing purposes. To get real AI analysis, please co
         logger.info(f"Sending chat request for project {project_id}")
         logger.debug(f"Message: {message.message[:100]}...")
         
-        # Call OpenAI API with new syntax
-        # Try GPT-4 first, fall back to GPT-3.5-turbo if needed
+        # Check if this is an analytical query that requires code execution
+        if project.get("file_id") and AnalysisEngine.is_analytical_query(message.message):
+            logger.info("📊 Detected analytical query - using Analysis Engine")
+            
+            # Get the DataFrame
+            file_info = STORAGE["files"][project["file_id"]]
+            df = file_info["dataframe"]
+            
+            # Initialize the analysis engine
+            analysis_engine = AnalysisEngine(
+                api_key=OPENAI_API_KEY,
+                model=os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
+            )
+            
+            # Execute the analysis
+            analysis_result = analysis_engine.execute_analysis(
+                df=df,
+                query=message.message,
+                context=STORAGE["contexts"].get(project_id)
+            )
+            
+            # Store the executed code in history
+            if project_id not in STORAGE["code_history"]:
+                STORAGE["code_history"][project_id] = []
+            
+            if analysis_result.get("code"):
+                STORAGE["code_history"][project_id].append({
+                    "timestamp": datetime.now().isoformat(),
+                    "query": message.message,
+                    "code": analysis_result["code"],
+                    "success": analysis_result.get("success", False)
+                })
+            
+            # Format the response
+            response_parts = []
+            
+            # Add the main result
+            response_parts.append(analysis_result["result"])
+            
+            # Add the explanation if available
+            if analysis_result.get("explanation"):
+                response_parts.append(f"\n{analysis_result['explanation']}")
+            
+            # Add the code if execution was successful
+            if analysis_result.get("success") and analysis_result.get("code"):
+                formatted_code = AnalysisEngine.format_code_for_display(analysis_result["code"])
+                if formatted_code:
+                    response_parts.append("\n\n**Executed Code:**")
+                    response_parts.append(f"```python\n{formatted_code}\n```")
+            
+            # Add error message if there was one
+            if not analysis_result.get("success") and analysis_result.get("error"):
+                response_parts.append(f"\n⚠️ Note: {analysis_result['error']}")
+            
+            ai_response = "\n".join(response_parts)
+            
+            return {
+                "response": ai_response,
+                "timestamp": datetime.now().isoformat(),
+                "code_executed": True,
+                "code": analysis_result.get("code")
+            }
+        
+        # Regular chat without code execution
         model = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")  # Default to gpt-3.5-turbo
         response = client.chat.completions.create(
             model=model,
@@ -373,7 +437,8 @@ This is a mock response for testing purposes. To get real AI analysis, please co
 
         return {
             "response": ai_response,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "code_executed": False
         }
 
     except Exception as e:
@@ -394,6 +459,16 @@ This is a mock response for testing purposes. To get real AI analysis, please co
             error_msg = f"Error: {str(e)}"
             
         raise HTTPException(status_code=500, detail=f"Error calling AI: {error_msg}")
+
+# Code history endpoint
+@app.get("/api/projects/{project_id}/code-history")
+async def get_code_history(project_id: str):
+    """Get code execution history for a project"""
+    if project_id not in STORAGE["projects"]:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    history = STORAGE["code_history"].get(project_id, [])
+    return {"history": history}
 
 # Run the server
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { api } from '../lib/api';
 import { Message } from '../types/types';
 import { QuerySuggestions } from './QuerySuggestions';
+import { CodeBlock } from './CodeBlock';
 
 export function ChatTab({ projectId }: { projectId: string }) {
   const [messages, setMessages] = useState<Message[]>([
@@ -79,6 +80,8 @@ export function ChatTab({ projectId }: { projectId: string }) {
         role: 'assistant',
         content: response.response,
         timestamp: new Date(),
+        code: response.code,
+        codeExecuted: response.code_executed,
       };
 
       setMessages((prev) => [...prev, aiMessage]);
@@ -142,6 +145,9 @@ export function ChatTab({ projectId }: { projectId: string }) {
               <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>
                 {message.content}
               </div>
+              {message.code && message.role === 'assistant' && (
+                <CodeBlock code={message.code} />
+              )}
               <div style={{ marginTop: '5px', fontSize: '12px', opacity: 0.5 }}>
                 {message.timestamp.toLocaleTimeString()}
               </div>

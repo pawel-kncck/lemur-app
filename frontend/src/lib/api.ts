@@ -86,4 +86,9 @@ export const api = {
   getSuggestions: async (projectId: string) => {
     return apiCall(`/api/projects/${projectId}/suggestions`);
   },
+
+  // Code History
+  getCodeHistory: async (projectId: string) => {
+    return apiCall(`/api/projects/${projectId}/code-history`);
+  },
 };

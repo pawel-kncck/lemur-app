@@ -26,6 +26,8 @@ export interface Message {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  code?: string;
+  codeExecuted?: boolean;
 }
 
 // API Response types
@@ -47,5 +49,7 @@ export interface FilePreviewResponse {
 export interface ChatResponse {
   response: string;
   timestamp: string;
+  code_executed?: boolean;
+  code?: string;
 }
 
