@@ -1,0 +1,21 @@
+order_id,customer_id,product_name,category,order_date,quantity,price,total_amount,status,region
+1001,C001,Widget A,Electronics,2024-01-15,2,29.99,59.98,Completed,North
+1002,C002,Gadget B,Electronics,2024-01-16,1,49.99,49.99,Completed,South
+1003,C003,Tool C,Hardware,2024-01-17,3,15.50,46.50,Pending,East
+1004,C001,Widget A,Electronics,2024-01-18,1,29.99,29.99,Completed,North
+1005,C004,Gadget B,Electronics,2024-01-19,2,49.99,99.98,Completed,West
+1006,C005,Tool D,Hardware,2024-01-20,1,25.00,25.00,Cancelled,North
+1007,C002,Widget A,Electronics,2024-01-21,4,29.99,119.96,Completed,South
+1008,C006,Accessory E,Accessories,2024-01-22,2,9.99,19.98,Completed,East
+1009,C003,Tool C,Hardware,2024-01-23,1,15.50,15.50,Completed,East
+1010,C007,Gadget F,Electronics,2024-01-24,1,89.99,89.99,Pending,West
+1011,C001,Accessory E,Accessories,2024-01-25,3,9.99,29.97,Completed,North
+1012,C008,Widget A,Electronics,2024-01-26,2,29.99,59.98,Completed,South
+1013,C004,Tool D,Hardware,2024-01-27,2,25.00,50.00,Completed,West
+1014,C009,Gadget B,Electronics,2024-01-28,1,49.99,49.99,Completed,North
+1015,C005,Accessory G,Accessories,2024-01-29,5,4.99,24.95,Completed,North
+1016,C010,Widget A,Electronics,2024-01-30,1,29.99,29.99,Pending,East
+1017,C002,Tool C,Hardware,2024-01-31,2,15.50,31.00,Completed,South
+1018,C011,Gadget F,Electronics,2024-02-01,1,89.99,89.99,Completed,West
+1019,C006,Widget A,Electronics,2024-02-02,3,29.99,89.97,Completed,East
+1020,C012,Accessory E,Accessories,2024-02-03,1,9.99,9.99,Completed,South

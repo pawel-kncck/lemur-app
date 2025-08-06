@@ -12,6 +12,7 @@ from datetime import datetime
 import asyncio
 import logging
 from dotenv import load_dotenv
+from data_profiler import DataProfiler
 
 # Load environment variables from .env file
 load_dotenv()
@@ -132,14 +133,18 @@ async def upload_file(project_id: str, file: UploadFile = File(...)):
         # Parse CSV to validate and get schema
         df = pd.read_csv(io.BytesIO(content))
 
-        # Store file data
+        # Generate comprehensive profile
+        profile = DataProfiler.profile_dataframe(df)
+
+        # Store file data with profile
         file_id = str(uuid.uuid4())
         STORAGE["files"][file_id] = {
             "content": content,
             "dataframe": df,
             "filename": file.filename,
             "rows": len(df),
-            "columns": list(df.columns)
+            "columns": list(df.columns),
+            "profile": profile  # NEW: Store the profile
         }
 
         # Update project with file info
@@ -154,7 +159,8 @@ async def upload_file(project_id: str, file: UploadFile = File(...)):
             "filename": file.filename,
             "rows": len(df),
             "columns": list(df.columns),
-            "preview": df.head(5).to_dict(orient='records')
+            "preview": df.head(5).to_dict(orient='records'),
+            "profile": profile  # NEW: Return profile in response
         }
 
     except Exception as e:
@@ -176,6 +182,52 @@ async def preview_file(file_id: str, rows: int = 100):
         "data": preview_df.to_dict(orient='records'),
         "dtypes": {col: str(dtype) for col, dtype in df.dtypes.items()}
     }
+
+# File profile endpoint
+@app.get("/api/files/{file_id}/profile")
+async def get_file_profile(file_id: str):
+    """Get the comprehensive profile of an uploaded file"""
+    if file_id not in STORAGE["files"]:
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    # Return stored profile or generate if not exists
+    if "profile" in STORAGE["files"][file_id]:
+        return STORAGE["files"][file_id]["profile"]
+    else:
+        # Generate profile if it doesn't exist (for backward compatibility)
+        df = STORAGE["files"][file_id]["dataframe"]
+        profile = DataProfiler.profile_dataframe(df)
+        STORAGE["files"][file_id]["profile"] = profile
+        return profile
+
+# Query suggestions endpoint
+@app.get("/api/projects/{project_id}/suggestions")
+async def get_suggestions(project_id: str):
+    """Get query suggestions based on current data and context"""
+    if project_id not in STORAGE["projects"]:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    project = STORAGE["projects"][project_id]
+    suggestions = []
+    
+    if project.get("file_id"):
+        file_data = STORAGE["files"][project["file_id"]]
+        
+        # Use suggestions from the profile if available
+        if "profile" in file_data and "suggested_analyses" in file_data["profile"]:
+            suggestions = file_data["profile"]["suggested_analyses"]
+        else:
+            # Generate basic suggestions
+            df = file_data["dataframe"]
+            suggestions = [
+                "What is the overall summary of this data?",
+                f"Show me the first 10 rows",
+                f"How many unique values are in each column?",
+                "Which columns have missing values?",
+                "What are the data types of each column?"
+            ]
+    
+    return {"suggestions": suggestions}
 
 # Context endpoints
 @app.put("/api/projects/{project_id}/context")
@@ -215,7 +267,7 @@ async def chat_with_data(project_id: str, message: ChatMessage):
         system_context += f"\n\nBusiness Context:\n{STORAGE['contexts'][project_id]}"
 
     # Add data schema information if file is uploaded
-    if project["file_id"]:
+    if project.get("file_id"):
         file_info = STORAGE["files"][project["file_id"]]
         df = file_info["dataframe"]
 
@@ -236,6 +288,30 @@ Sample Data (first 3 rows):
 Basic Statistics:
 {df.describe().to_string() if not df.empty else 'No numeric data'}
         """
+        
+        # Add profile insights if available
+        if "profile" in file_info:
+            profile = file_info["profile"]
+            
+            # Add data quality information
+            if "data_quality" in profile:
+                quality = profile["data_quality"]
+                data_info += f"\n\nData Quality Assessment: {quality.get('assessment', 'Unknown')}"
+                if quality.get("issues"):
+                    data_info += f"\nIssues: {', '.join(quality['issues'][:3])}"
+                if quality.get("warnings"):
+                    data_info += f"\nWarnings: {', '.join(quality['warnings'][:3])}"
+            
+            # Add relationship information
+            if "potential_relationships" in profile:
+                rels = profile["potential_relationships"]
+                if rels.get("potential_ids"):
+                    data_info += f"\n\nPotential ID columns: {', '.join(rels['potential_ids'])}"
+                if rels.get("potential_dates"):
+                    data_info += f"\nDate columns: {', '.join(rels['potential_dates'])}"
+                if rels.get("potential_categories"):
+                    data_info += f"\nCategorical columns: {', '.join(rels['potential_categories'][:5])}"
+        
         system_context += data_info
 
     # Check for mock mode
