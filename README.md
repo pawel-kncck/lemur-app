@@ -14,8 +14,11 @@ Lemur is a modern web application that allows users to upload CSV files, provide
 
 - **Frontend**: React + TypeScript + Vite
 - **Backend**: FastAPI + Python
-- **AI**: OpenAI GPT-4
+- **AI**: OpenAI GPT-4 with LangChain
 - **Data Processing**: Pandas
+- **Database**: PostgreSQL (SQLite for development)
+- **File Storage**: S3/MinIO
+- **Caching**: Redis
 - **Styling**: CSS-in-JS with dark theme
 
 ## Quick Start
@@ -76,14 +79,26 @@ If you prefer to set up manually or the auto-start doesn't work:
 
 1. **Set up environment**
    ```bash
-   cp backend/.env.example backend/.env
-   # Edit backend/.env and add your OpenAI API key
+   cp .env.example .env
+   # Edit .env and add your OpenAI API key
    ```
 
-2. **Start with Docker Compose**
+2. **Start all services with Docker Compose**
    ```bash
    docker-compose up
    ```
+   
+   This will start:
+   - Backend API (port 8000)
+   - Frontend (port 5173)
+   - PostgreSQL database (port 5432)
+   - MinIO S3-compatible storage (port 9000, console on 9001)
+   - Redis cache (port 6379)
+
+3. **Access services**
+   - Frontend: http://localhost:5173
+   - Backend API: http://localhost:8000
+   - MinIO Console: http://localhost:9001 (login: minioadmin/minioadmin)
 
 ## Usage Guide
 

@@ -1,18 +1,92 @@
 version: '3.8'
 
 services:
+  # MinIO - S3-compatible object storage for local development
+  minio:
+    image: minio/minio:latest
+    container_name: lemur-minio
+    ports:
+      - "9000:9000"     # MinIO API
+      - "9001:9001"     # MinIO Console
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - lemur-network
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: lemur-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: lemur
+      POSTGRES_PASSWORD: lemur_password
+      POSTGRES_DB: lemur_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lemur"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lemur-network
+
+  # Redis for caching (optional, for future use)
+  redis:
+    image: redis:7-alpine
+    container_name: lemur-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lemur-network
+
+  # Backend service
   backend:
     build: ./backend
+    container_name: lemur-backend
     ports:
       - '8000:8000'
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DATABASE_URL=postgresql://lemur:lemur_password@postgres:5432/lemur_db
+      - S3_ENDPOINT_URL=http://minio:9000
+      - S3_BUCKET_NAME=lemur-data
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - REDIS_URL=redis://redis:6379
     volumes:
       - ./backend:/app
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      - postgres
+      - minio
+      - redis
+    networks:
+      - lemur-network
 
+  # Frontend service
   frontend:
     build: ./frontend
+    container_name: lemur-frontend
     ports:
       - '5173:5173'
     environment:
@@ -21,3 +95,17 @@ services:
       - ./frontend:/app
       - /app/node_modules
     command: npm run dev
+    networks:
+      - lemur-network
+
+volumes:
+  minio_data:
+    driver: local
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  lemur-network:
+    driver: bridge

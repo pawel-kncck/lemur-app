@@ -31,6 +31,7 @@ from auth import (
     UserRegister,
     UserAuth
 )
+from storage import get_storage_service
 
 # Load environment variables from .env file
 load_dotenv()
@@ -59,6 +60,10 @@ async def startup_event():
         from models import Base
         Base.metadata.create_all(bind=engine)
         logger.info("✅ Database tables initialized")
+        
+        # Initialize storage service
+        storage = get_storage_service()
+        logger.info("✅ Storage service initialized")
     except Exception as e:
         logger.error(f"❌ Failed to initialize database: {e}")
 
@@ -324,10 +329,25 @@ async def upload_file(
         # Generate comprehensive profile
         profile = DataProfiler.profile_dataframe(df)
 
-        # Create database file entry
+        # Upload file to S3/MinIO
+        storage = get_storage_service()
+        upload_result = storage.upload_file(
+            file_content=content,
+            file_name=file.filename,
+            project_id=str(db_project.id),
+            file_id=str(uuid.uuid4()),
+            content_type="text/csv",
+            metadata={
+                "rows": str(len(df)),
+                "columns": json.dumps(list(df.columns))
+            }
+        )
+        
+        # Create database file entry with S3 path
         db_file = DBFile(
             project_id=db_project.id,
             filename=file.filename,
+            file_path=upload_result["s3_key"],  # Store S3 key
             rows=len(df),
             columns=list(df.columns),
             profile=profile
@@ -336,7 +356,7 @@ async def upload_file(
         db.commit()
         db.refresh(db_file)
         
-        # Store DataFrame in memory for now (will migrate to proper storage later)
+        # Store DataFrame in memory for now (for backward compatibility)
         FILE_STORAGE[str(db_file.id)] = {
             "content": content,
             "dataframe": df
@@ -353,6 +373,57 @@ async def upload_file(
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error processing file: {str(e)}")
+
+# File download endpoint (using presigned URL)
+@app.get("/api/files/{file_id}/download")
+async def download_file(
+    file_id: str,
+    current_user_email: str = Depends(get_current_user_email),
+    db: Session = Depends(get_db)
+):
+    """Get a presigned URL to download a file"""
+    # Verify user and file access
+    user = db.query(User).filter(User.email == current_user_email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Get file from database
+    try:
+        file_uuid = uuid.UUID(file_id)
+        db_file = db.query(DBFile).join(DBProject).filter(
+            DBFile.id == file_uuid,
+            DBProject.user_id == user.id
+        ).first()
+        
+        if not db_file:
+            raise HTTPException(status_code=404, detail="File not found")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid file ID")
+    
+    # Generate presigned URL for download
+    if db_file.file_path:
+        storage = get_storage_service()
+        download_url = storage.generate_presigned_url(
+            s3_key=db_file.file_path,
+            expiration=3600,  # 1 hour
+            download=True
+        )
+        return {
+            "download_url": download_url,
+            "filename": db_file.filename,
+            "expires_in": 3600
+        }
+    else:
+        # Fallback for files without S3 path (old files in memory)
+        if str(db_file.id) in FILE_STORAGE:
+            content = FILE_STORAGE[str(db_file.id)]["content"]
+            return StreamingResponse(
+                io.BytesIO(content),
+                media_type="text/csv",
+                headers={"Content-Disposition": f"attachment; filename={db_file.filename}"}
+            )
+        else:
+            raise HTTPException(status_code=404, detail="File data not found")
 
 # File preview endpoint
 @app.get("/api/files/{file_id}/preview")
