@@ -1,6 +1,7 @@
-from fastapi import FastAPI, UploadFile, HTTPException, File
+from fastapi import FastAPI, UploadFile, HTTPException, File, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from typing import Optional, Dict, List
 import pandas as pd
@@ -12,9 +13,24 @@ from datetime import datetime
 import asyncio
 import logging
 from dotenv import load_dotenv
+from sqlalchemy.orm import Session
+
+# Import our modules
 from data_profiler import DataProfiler
 from query_suggester import QuerySuggester
 from analysis_engine import AnalysisEngine
+from database import get_db, init_db, engine
+from models import User, Project as DBProject, File as DBFile, Context as DBContext, ChatHistory
+from auth import (
+    get_password_hash,
+    verify_password,
+    create_access_token,
+    create_refresh_token,
+    get_current_user_email,
+    Token,
+    UserRegister,
+    UserAuth
+)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -24,7 +40,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize FastAPI
-app = FastAPI()
+app = FastAPI(title="Lemur API", version="2.0.0")
 
 # Configure CORS - allow all origins for testing
 app.add_middleware(
@@ -34,6 +50,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Initialize database tables on startup
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database tables on application startup"""
+    try:
+        from models import Base
+        Base.metadata.create_all(bind=engine)
+        logger.info("✅ Database tables initialized")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize database: {e}")
 
 # Configure OpenAI
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -85,38 +112,189 @@ class Project(BaseModel):
 # Health check endpoint
 @app.get("/")
 async def health_check():
-    return {"status": "ok", "message": "Lemur API is running"}
+    return {"status": "ok", "message": "Lemur API is running", "version": "2.0.0"}
 
-# Project endpoints
+# Authentication endpoints
+@app.post("/api/auth/register", response_model=Token)
+async def register(user: UserRegister, db: Session = Depends(get_db)):
+    """Register a new user"""
+    # Check if user already exists
+    existing_user = db.query(User).filter(User.email == user.email).first()
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email already registered"
+        )
+    
+    # Create new user
+    hashed_password = get_password_hash(user.password)
+    db_user = User(
+        email=user.email,
+        hashed_password=hashed_password
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    
+    # Create tokens
+    access_token = create_access_token(data={"sub": user.email})
+    refresh_token = create_refresh_token(data={"sub": user.email})
+    
+    return Token(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer"
+    )
+
+@app.post("/api/auth/login", response_model=Token)
+async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    """Login with email and password"""
+    # Find user
+    user = db.query(User).filter(User.email == form_data.username).first()
+    
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # Create tokens
+    access_token = create_access_token(data={"sub": user.email})
+    refresh_token = create_refresh_token(data={"sub": user.email})
+    
+    return Token(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer"
+    )
+
+@app.get("/api/auth/me")
+async def get_current_user(current_user_email: str = Depends(get_current_user_email), db: Session = Depends(get_db)):
+    """Get current user information"""
+    user = db.query(User).filter(User.email == current_user_email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "is_active": user.is_active,
+        "created_at": user.created_at.isoformat()
+    }
+
+# Project endpoints (now with authentication and database)
 @app.post("/api/projects", response_model=Project)
-async def create_project(project: ProjectCreate):
-    """Create a new project"""
-    project_id = str(uuid.uuid4())
-
+async def create_project(
+    project: ProjectCreate,
+    current_user_email: str = Depends(get_current_user_email),
+    db: Session = Depends(get_db)
+):
+    """Create a new project (requires authentication)"""
+    # Get user
+    user = db.query(User).filter(User.email == current_user_email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Create project in database
+    db_project = DBProject(
+        name=project.name,
+        user_id=user.id
+    )
+    db.add(db_project)
+    db.commit()
+    db.refresh(db_project)
+    
+    # Also store in memory for backward compatibility
     project_data = {
-        "id": project_id,
-        "name": project.name,
-        "created_at": datetime.now().isoformat(),
+        "id": str(db_project.id),
+        "name": db_project.name,
+        "created_at": db_project.created_at.isoformat(),
         "context": None,
         "file_id": None,
         "file_name": None,
         "file_columns": None
     }
-
-    STORAGE["projects"][project_id] = project_data
+    STORAGE["projects"][str(db_project.id)] = project_data
+    
     return project_data
 
 @app.get("/api/projects")
-async def list_projects():
-    """List all projects"""
-    return list(STORAGE["projects"].values())
+async def list_projects(
+    current_user_email: str = Depends(get_current_user_email),
+    db: Session = Depends(get_db)
+):
+    """List all projects for the authenticated user"""
+    # Get user
+    user = db.query(User).filter(User.email == current_user_email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Get user's projects
+    projects = db.query(DBProject).filter(DBProject.user_id == user.id).all()
+    
+    # Convert to response format
+    project_list = []
+    for proj in projects:
+        # Check if we have additional data in memory storage
+        proj_id = str(proj.id)
+        if proj_id in STORAGE["projects"]:
+            project_list.append(STORAGE["projects"][proj_id])
+        else:
+            # Get latest file if exists
+            latest_file = db.query(DBFile).filter(DBFile.project_id == proj.id).order_by(DBFile.created_at.desc()).first()
+            
+            project_data = {
+                "id": proj_id,
+                "name": proj.name,
+                "created_at": proj.created_at.isoformat(),
+                "context": None,
+                "file_id": str(latest_file.id) if latest_file else None,
+                "file_name": latest_file.filename if latest_file else None,
+                "file_columns": latest_file.columns if latest_file else None
+            }
+            project_list.append(project_data)
+    
+    return project_list
 
 @app.get("/api/projects/{project_id}", response_model=Project)
-async def get_project(project_id: str):
-    """Get a specific project"""
-    if project_id not in STORAGE["projects"]:
+async def get_project(
+    project_id: str,
+    current_user_email: str = Depends(get_current_user_email),
+    db: Session = Depends(get_db)
+):
+    """Get a specific project (requires authentication)"""
+    # Get user
+    user = db.query(User).filter(User.email == current_user_email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Get project and verify ownership
+    db_project = db.query(DBProject).filter(
+        DBProject.id == project_id,
+        DBProject.user_id == user.id
+    ).first()
+    
+    if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
-    return STORAGE["projects"][project_id]
+    
+    # Check memory storage first
+    if project_id in STORAGE["projects"]:
+        return STORAGE["projects"][project_id]
+    
+    # Otherwise, build from database
+    latest_file = db.query(DBFile).filter(DBFile.project_id == db_project.id).order_by(DBFile.created_at.desc()).first()
+    context = db.query(DBContext).filter(DBContext.project_id == db_project.id).order_by(DBContext.updated_at.desc()).first()
+    
+    return {
+        "id": str(db_project.id),
+        "name": db_project.name,
+        "created_at": db_project.created_at.isoformat(),
+        "context": context.content if context else None,
+        "file_id": str(latest_file.id) if latest_file else None,
+        "file_name": latest_file.filename if latest_file else None,
+        "file_columns": latest_file.columns if latest_file else None
+    }
 
 # File upload endpoint
 @app.post("/api/projects/{project_id}/upload")
