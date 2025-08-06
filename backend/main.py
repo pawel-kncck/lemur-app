@@ -81,14 +81,10 @@ else:
         logger.error(f"❌ Failed to initialize OpenAI client: {type(e).__name__}: {e}")
         client = None
 
-# In-memory storage (will reset on server restart)
-# In production, this would be a database
-STORAGE = {
-    "projects": {},  # project_id -> project_data
-    "files": {},     # file_id -> file_content
-    "contexts": {},  # project_id -> context
-    "code_history": {},  # project_id -> list of executed code blocks
-}
+# Temporary in-memory storage for file contents and code history
+# These will be migrated to proper storage solutions later
+FILE_STORAGE = {}  # file_id -> file_content (pandas DataFrame)
+CODE_HISTORY = {}  # project_id -> list of executed code blocks
 
 # Pydantic models for request/response
 class ProjectCreate(BaseModel):
@@ -205,8 +201,8 @@ async def create_project(
     db.commit()
     db.refresh(db_project)
     
-    # Also store in memory for backward compatibility
-    project_data = {
+    # Return project data in the expected format
+    return {
         "id": str(db_project.id),
         "name": db_project.name,
         "created_at": db_project.created_at.isoformat(),
@@ -215,9 +211,6 @@ async def create_project(
         "file_name": None,
         "file_columns": None
     }
-    STORAGE["projects"][str(db_project.id)] = project_data
-    
-    return project_data
 
 @app.get("/api/projects")
 async def list_projects(
@@ -236,24 +229,22 @@ async def list_projects(
     # Convert to response format
     project_list = []
     for proj in projects:
-        # Check if we have additional data in memory storage
         proj_id = str(proj.id)
-        if proj_id in STORAGE["projects"]:
-            project_list.append(STORAGE["projects"][proj_id])
-        else:
-            # Get latest file if exists
-            latest_file = db.query(DBFile).filter(DBFile.project_id == proj.id).order_by(DBFile.created_at.desc()).first()
-            
-            project_data = {
-                "id": proj_id,
-                "name": proj.name,
-                "created_at": proj.created_at.isoformat(),
-                "context": None,
-                "file_id": str(latest_file.id) if latest_file else None,
-                "file_name": latest_file.filename if latest_file else None,
-                "file_columns": latest_file.columns if latest_file else None
-            }
-            project_list.append(project_data)
+        # Get latest file if exists
+        latest_file = db.query(DBFile).filter(DBFile.project_id == proj.id).order_by(DBFile.created_at.desc()).first()
+        # Get context if exists
+        context = db.query(DBContext).filter(DBContext.project_id == proj.id).first()
+        
+        project_data = {
+            "id": proj_id,
+            "name": proj.name,
+            "created_at": proj.created_at.isoformat(),
+            "context": context.content if context else None,
+            "file_id": str(latest_file.id) if latest_file else None,
+            "file_name": latest_file.filename if latest_file else None,
+            "file_columns": latest_file.columns if latest_file else None
+        }
+        project_list.append(project_data)
     
     return project_list
 
@@ -278,11 +269,7 @@ async def get_project(
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
     
-    # Check memory storage first
-    if project_id in STORAGE["projects"]:
-        return STORAGE["projects"][project_id]
-    
-    # Otherwise, build from database
+    # Build from database
     latest_file = db.query(DBFile).filter(DBFile.project_id == db_project.id).order_by(DBFile.created_at.desc()).first()
     context = db.query(DBContext).filter(DBContext.project_id == db_project.id).order_by(DBContext.updated_at.desc()).first()
     
@@ -298,10 +285,30 @@ async def get_project(
 
 # File upload endpoint
 @app.post("/api/projects/{project_id}/upload")
-async def upload_file(project_id: str, file: UploadFile = File(...)):
+async def upload_file(
+    project_id: str, 
+    file: UploadFile = File(...),
+    current_user_email: str = Depends(get_current_user_email),
+    db: Session = Depends(get_db)
+):
     """Upload a CSV file to a project"""
-    if project_id not in STORAGE["projects"]:
-        raise HTTPException(status_code=404, detail="Project not found")
+    # Get user and verify project ownership
+    user = db.query(User).filter(User.email == current_user_email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Get project from database
+    try:
+        project_uuid = uuid.UUID(project_id)
+        db_project = db.query(DBProject).filter(
+            DBProject.id == project_uuid,
+            DBProject.user_id == user.id
+        ).first()
+        
+        if not db_project:
+            raise HTTPException(status_code=404, detail="Project not found")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid project ID")
 
     # Validate file type
     if not file.filename.endswith(('.csv', '.CSV')):
@@ -317,31 +324,31 @@ async def upload_file(project_id: str, file: UploadFile = File(...)):
         # Generate comprehensive profile
         profile = DataProfiler.profile_dataframe(df)
 
-        # Store file data with profile
-        file_id = str(uuid.uuid4())
-        STORAGE["files"][file_id] = {
+        # Create database file entry
+        db_file = DBFile(
+            project_id=db_project.id,
+            filename=file.filename,
+            rows=len(df),
+            columns=list(df.columns),
+            profile=profile
+        )
+        db.add(db_file)
+        db.commit()
+        db.refresh(db_file)
+        
+        # Store DataFrame in memory for now (will migrate to proper storage later)
+        FILE_STORAGE[str(db_file.id)] = {
             "content": content,
-            "dataframe": df,
-            "filename": file.filename,
-            "rows": len(df),
-            "columns": list(df.columns),
-            "profile": profile  # NEW: Store the profile
+            "dataframe": df
         }
 
-        # Update project with file info
-        STORAGE["projects"][project_id].update({
-            "file_id": file_id,
-            "file_name": file.filename,
-            "file_columns": list(df.columns)
-        })
-
         return {
-            "file_id": file_id,
-            "filename": file.filename,
-            "rows": len(df),
-            "columns": list(df.columns),
+            "file_id": str(db_file.id),
+            "filename": db_file.filename,
+            "rows": db_file.rows,
+            "columns": db_file.columns,
             "preview": df.head(5).to_dict(orient='records'),
-            "profile": profile  # NEW: Return profile in response
+            "profile": db_file.profile  # Return profile from database
         }
 
     except Exception as e:
@@ -349,62 +356,151 @@ async def upload_file(project_id: str, file: UploadFile = File(...)):
 
 # File preview endpoint
 @app.get("/api/files/{file_id}/preview")
-async def preview_file(file_id: str, rows: int = 100):
+async def preview_file(
+    file_id: str, 
+    rows: int = 100,
+    current_user_email: str = Depends(get_current_user_email),
+    db: Session = Depends(get_db)
+):
     """Get a preview of uploaded file"""
-    if file_id not in STORAGE["files"]:
-        raise HTTPException(status_code=404, detail="File not found")
-
-    df = STORAGE["files"][file_id]["dataframe"]
+    # Verify user and file access
+    user = db.query(User).filter(User.email == current_user_email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Get file from database
+    try:
+        file_uuid = uuid.UUID(file_id)
+        db_file = db.query(DBFile).join(DBProject).filter(
+            DBFile.id == file_uuid,
+            DBProject.user_id == user.id
+        ).first()
+        
+        if not db_file:
+            raise HTTPException(status_code=404, detail="File not found")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid file ID")
+    
+    # Get DataFrame from memory storage
+    if str(db_file.id) not in FILE_STORAGE:
+        raise HTTPException(status_code=404, detail="File data not found in storage")
+    
+    df = FILE_STORAGE[str(db_file.id)]["dataframe"]
     preview_df = df.head(rows)
 
     return {
-        "rows": len(df),
-        "columns": list(df.columns),
+        "rows": db_file.rows,
+        "columns": db_file.columns,
         "data": preview_df.to_dict(orient='records'),
         "dtypes": {col: str(dtype) for col, dtype in df.dtypes.items()}
     }
 
 # File profile endpoint
 @app.get("/api/files/{file_id}/profile")
-async def get_file_profile(file_id: str):
+async def get_file_profile(
+    file_id: str,
+    current_user_email: str = Depends(get_current_user_email),
+    db: Session = Depends(get_db)
+):
     """Get the comprehensive profile of an uploaded file"""
-    if file_id not in STORAGE["files"]:
-        raise HTTPException(status_code=404, detail="File not found")
+    # Verify user and file access
+    user = db.query(User).filter(User.email == current_user_email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Get file from database
+    try:
+        file_uuid = uuid.UUID(file_id)
+        db_file = db.query(DBFile).join(DBProject).filter(
+            DBFile.id == file_uuid,
+            DBProject.user_id == user.id
+        ).first()
+        
+        if not db_file:
+            raise HTTPException(status_code=404, detail="File not found")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid file ID")
     
     # Return stored profile or generate if not exists
-    if "profile" in STORAGE["files"][file_id]:
-        return STORAGE["files"][file_id]["profile"]
+    if db_file.profile:
+        return db_file.profile
     else:
         # Generate profile if it doesn't exist (for backward compatibility)
-        df = STORAGE["files"][file_id]["dataframe"]
+        if str(db_file.id) not in FILE_STORAGE:
+            raise HTTPException(status_code=404, detail="File data not found in storage")
+        
+        df = FILE_STORAGE[str(db_file.id)]["dataframe"]
         profile = DataProfiler.profile_dataframe(df)
-        STORAGE["files"][file_id]["profile"] = profile
+        
+        # Update profile in database
+        db_file.profile = profile
+        db.commit()
+        
         return profile
 
 # Query suggestions endpoint
 @app.get("/api/projects/{project_id}/suggestions")
-async def get_suggestions(project_id: str):
+async def get_suggestions(
+    project_id: str,
+    current_user_email: str = Depends(get_current_user_email),
+    db: Session = Depends(get_db)
+):
     """Get query suggestions based on current data and context"""
-    if project_id not in STORAGE["projects"]:
-        raise HTTPException(status_code=404, detail="Project not found")
+    # Get user and verify project ownership
+    user = db.query(User).filter(User.email == current_user_email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
     
-    project = STORAGE["projects"][project_id]
+    # Get project from database
+    try:
+        project_uuid = uuid.UUID(project_id)
+        db_project = db.query(DBProject).filter(
+            DBProject.id == project_uuid,
+            DBProject.user_id == user.id
+        ).first()
+        
+        if not db_project:
+            raise HTTPException(status_code=404, detail="Project not found")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid project ID")
+    
     suggestions = []
     
-    if project.get("file_id"):
-        file_data = STORAGE["files"][project["file_id"]]
-        df = file_data["dataframe"]
-        profile = file_data.get("profile", {})
-        context = STORAGE["contexts"].get(project_id)
+    # Get files for this project
+    db_files = db.query(DBFile).filter(DBFile.project_id == db_project.id).all()
+    
+    if db_files:
+        # Use the first file for now
+        db_file = db_files[0]
         
-        # Get chat history if available (for now, empty as we don't store it yet)
-        chat_history = []
+        # Get DataFrame from memory
+        if str(db_file.id) not in FILE_STORAGE:
+            raise HTTPException(status_code=500, detail="File data not available in memory")
+        
+        df = FILE_STORAGE[str(db_file.id)]["dataframe"]
+        profile = db_file.profile or {}
+        
+        # Get context
+        db_context = db.query(DBContext).filter(
+            DBContext.project_id == db_project.id
+        ).first()
+        context_content = db_context.content if db_context else None
+        
+        # Get chat history from database
+        chat_entries = db.query(ChatHistory).filter(
+            ChatHistory.project_id == db_project.id
+        ).order_by(ChatHistory.created_at.desc()).limit(10).all()
+        
+        chat_history = [
+            {"question": entry.user_message, "answer": entry.assistant_response}
+            for entry in chat_entries
+        ]
         
         # Generate intelligent suggestions using QuerySuggester
         suggestions = QuerySuggester.generate_suggestions(
             df=df,
             profile=profile,
-            context=context,
+            context=context_content,
             chat_history=chat_history,
             max_suggestions=7
         )
@@ -420,53 +516,144 @@ async def get_suggestions(project_id: str):
 
 # Context endpoints
 @app.put("/api/projects/{project_id}/context")
-async def update_context(project_id: str, context: ContextUpdate):
+async def update_context(
+    project_id: str, 
+    context: ContextUpdate,
+    current_user_email: str = Depends(get_current_user_email),
+    db: Session = Depends(get_db)
+):
     """Save or update project context"""
-    if project_id not in STORAGE["projects"]:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    STORAGE["contexts"][project_id] = context.content
-    STORAGE["projects"][project_id]["context"] = context.content
-
+    # Get user and verify project ownership
+    user = db.query(User).filter(User.email == current_user_email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Get project from database
+    try:
+        project_uuid = uuid.UUID(project_id)
+        db_project = db.query(DBProject).filter(
+            DBProject.id == project_uuid,
+            DBProject.user_id == user.id
+        ).first()
+        
+        if not db_project:
+            raise HTTPException(status_code=404, detail="Project not found")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid project ID")
+    
+    # Check if context already exists
+    db_context = db.query(DBContext).filter(
+        DBContext.project_id == db_project.id
+    ).first()
+    
+    if db_context:
+        # Update existing context
+        db_context.content = context.content
+        db_context.updated_at = datetime.utcnow()
+    else:
+        # Create new context
+        db_context = DBContext(
+            project_id=db_project.id,
+            content=context.content
+        )
+        db.add(db_context)
+    
+    db.commit()
+    
     return {"status": "saved", "context": context.content}
 
 @app.get("/api/projects/{project_id}/context")
-async def get_context(project_id: str):
+async def get_context(
+    project_id: str,
+    current_user_email: str = Depends(get_current_user_email),
+    db: Session = Depends(get_db)
+):
     """Get project context"""
-    if project_id not in STORAGE["projects"]:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    context = STORAGE["contexts"].get(project_id, "")
-    return {"context": context}
+    # Get user and verify project ownership
+    user = db.query(User).filter(User.email == current_user_email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Get project from database
+    try:
+        project_uuid = uuid.UUID(project_id)
+        db_project = db.query(DBProject).filter(
+            DBProject.id == project_uuid,
+            DBProject.user_id == user.id
+        ).first()
+        
+        if not db_project:
+            raise HTTPException(status_code=404, detail="Project not found")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid project ID")
+    
+    # Get context from database
+    db_context = db.query(DBContext).filter(
+        DBContext.project_id == db_project.id
+    ).first()
+    
+    context_content = db_context.content if db_context else ""
+    return {"context": context_content}
 
 # Chat endpoint - the core feature
 @app.post("/api/projects/{project_id}/chat")
-async def chat_with_data(project_id: str, message: ChatMessage):
+async def chat_with_data(
+    project_id: str, 
+    message: ChatMessage,
+    current_user_email: str = Depends(get_current_user_email),
+    db: Session = Depends(get_db)
+):
     """Chat with AI about your data"""
-    if project_id not in STORAGE["projects"]:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    project = STORAGE["projects"][project_id]
+    # Get user and verify project ownership
+    user = db.query(User).filter(User.email == current_user_email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Get project from database
+    try:
+        project_uuid = uuid.UUID(project_id)
+        db_project = db.query(DBProject).filter(
+            DBProject.id == project_uuid,
+            DBProject.user_id == user.id
+        ).first()
+        
+        if not db_project:
+            raise HTTPException(status_code=404, detail="Project not found")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid project ID")
 
     # Build context for the AI
     system_context = "You are a helpful data analysis assistant."
 
     # Add user's business context if available
-    if project_id in STORAGE["contexts"]:
-        system_context += f"\n\nBusiness Context:\n{STORAGE['contexts'][project_id]}"
+    db_context = db.query(DBContext).filter(
+        DBContext.project_id == db_project.id
+    ).first()
+    
+    if db_context and db_context.content:
+        system_context += f"\n\nBusiness Context:\n{db_context.content}"
 
     # Add data schema information if file is uploaded
-    if project.get("file_id"):
-        file_info = STORAGE["files"][project["file_id"]]
-        df = file_info["dataframe"]
+    db_files = db.query(DBFile).filter(DBFile.project_id == db_project.id).all()
+    
+    if db_files:
+        # Use the first file for now (will support multiple files later)
+        db_file = db_files[0]
+        
+        # Get DataFrame from memory storage
+        if str(db_file.id) in FILE_STORAGE:
+            df = FILE_STORAGE[str(db_file.id)]["dataframe"]
+        else:
+            # If not in memory, we can't process the request
+            raise HTTPException(status_code=500, detail="File data not available in memory")
 
         # Get basic statistics and info about the data
         data_info = f"""
 
 Data Information:
-- File: {file_info['filename']}
-- Rows: {len(df)}
-- Columns: {', '.join(df.columns)}
+- File: {db_file.filename}
+- Rows: {db_file.rows}
+- Columns: {', '.join(db_file.columns)}
 
 Column Types:
 {df.dtypes.to_string()}
@@ -479,8 +666,8 @@ Basic Statistics:
         """
         
         # Add profile insights if available
-        if "profile" in file_info:
-            profile = file_info["profile"]
+        if db_file.profile:
+            profile = db_file.profile
             
             # Add data quality information
             if "data_quality" in profile:
@@ -506,15 +693,27 @@ Basic Statistics:
     # Check for mock mode
     if os.getenv("MOCK_OPENAI", "false").lower() == "true":
         logger.info("📝 Using mock mode for testing")
+        
+        # Get file info for mock response
+        file_info_text = "No data file has been uploaded yet."
+        columns_text = ""
+        if db_files:
+            file_info_text = f"Your data file '{db_files[0].filename}' contains {db_files[0].rows} rows and {len(db_files[0].columns)} columns."
+            columns_text = f"Columns in your data: {', '.join(db_files[0].columns)}"
+        
+        context_text = "No business context has been provided."
+        if db_context and db_context.content:
+            context_text = f"Context provided: {db_context.content[:100]}..."
+        
         mock_response = f"""I'm analyzing your data in mock mode. Here's what I can tell you:
 
 Based on your question: "{message.message}"
 
-{f"Your data file '{project['file_name']}' contains {STORAGE['files'][project['file_id']]['rows']} rows and {len(project['file_columns'])} columns." if project.get('file_id') else "No data file has been uploaded yet."}
+{file_info_text}
 
-{f"Columns in your data: {', '.join(project['file_columns'])}" if project.get('file_columns') else ""}
+{columns_text}
 
-{f"Context provided: {STORAGE['contexts'].get(project_id, 'No context provided')[:100]}..." if project_id in STORAGE['contexts'] else "No business context has been provided."}
+{context_text}
 
 This is a mock response for testing purposes. To get real AI analysis, please configure a valid OpenAI API key."""
         
@@ -536,12 +735,15 @@ This is a mock response for testing purposes. To get real AI analysis, please co
         logger.debug(f"Message: {message.message[:100]}...")
         
         # Check if this is an analytical query that requires code execution
-        if project.get("file_id") and AnalysisEngine.is_analytical_query(message.message):
+        if db_files and AnalysisEngine.is_analytical_query(message.message):
             logger.info("📊 Detected analytical query - using Analysis Engine")
             
             # Get the DataFrame
-            file_info = STORAGE["files"][project["file_id"]]
-            df = file_info["dataframe"]
+            db_file = db_files[0]
+            if str(db_file.id) not in FILE_STORAGE:
+                raise HTTPException(status_code=500, detail="File data not available in memory")
+            
+            df = FILE_STORAGE[str(db_file.id)]["dataframe"]
             
             # Initialize the analysis engine
             analysis_engine = AnalysisEngine(
@@ -549,19 +751,22 @@ This is a mock response for testing purposes. To get real AI analysis, please co
                 model=os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
             )
             
+            # Get context content
+            context_content = db_context.content if db_context else None
+            
             # Execute the analysis
             analysis_result = analysis_engine.execute_analysis(
                 df=df,
                 query=message.message,
-                context=STORAGE["contexts"].get(project_id)
+                context=context_content
             )
             
             # Store the executed code in history
-            if project_id not in STORAGE["code_history"]:
-                STORAGE["code_history"][project_id] = []
+            if project_id not in CODE_HISTORY:
+                CODE_HISTORY[project_id] = []
             
             if analysis_result.get("code"):
-                STORAGE["code_history"][project_id].append({
+                CODE_HISTORY[project_id].append({
                     "timestamp": datetime.now().isoformat(),
                     "query": message.message,
                     "code": analysis_result["code"],
@@ -591,6 +796,19 @@ This is a mock response for testing purposes. To get real AI analysis, please co
             
             ai_response = "\n".join(response_parts)
             
+            # Save to chat history
+            chat_entry = ChatHistory(
+                project_id=db_project.id,
+                user_message=message.message,
+                assistant_response=ai_response,
+                extra_metadata={
+                    "code_executed": True,
+                    "code": analysis_result.get("code")
+                }
+            )
+            db.add(chat_entry)
+            db.commit()
+            
             return {
                 "response": ai_response,
                 "timestamp": datetime.now().isoformat(),
@@ -612,6 +830,16 @@ This is a mock response for testing purposes. To get real AI analysis, please co
 
         ai_response = response.choices[0].message.content
         logger.info("✅ Successfully received response from OpenAI")
+
+        # Save to chat history
+        chat_entry = ChatHistory(
+            project_id=db_project.id,
+            user_message=message.message,
+            assistant_response=ai_response,
+            extra_metadata={"code_executed": False}
+        )
+        db.add(chat_entry)
+        db.commit()
 
         return {
             "response": ai_response,
@@ -640,12 +868,32 @@ This is a mock response for testing purposes. To get real AI analysis, please co
 
 # Code history endpoint
 @app.get("/api/projects/{project_id}/code-history")
-async def get_code_history(project_id: str):
+async def get_code_history(
+    project_id: str,
+    current_user_email: str = Depends(get_current_user_email),
+    db: Session = Depends(get_db)
+):
     """Get code execution history for a project"""
-    if project_id not in STORAGE["projects"]:
-        raise HTTPException(status_code=404, detail="Project not found")
+    # Get user and verify project ownership
+    user = db.query(User).filter(User.email == current_user_email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
     
-    history = STORAGE["code_history"].get(project_id, [])
+    # Get project from database
+    try:
+        project_uuid = uuid.UUID(project_id)
+        db_project = db.query(DBProject).filter(
+            DBProject.id == project_uuid,
+            DBProject.user_id == user.id
+        ).first()
+        
+        if not db_project:
+            raise HTTPException(status_code=404, detail="Project not found")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid project ID")
+    
+    # For now, return from memory storage, but ideally this should come from DB
+    history = CODE_HISTORY.get(project_id, [])
     return {"history": history}
 
 # Run the server

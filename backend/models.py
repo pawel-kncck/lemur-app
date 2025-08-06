@@ -46,6 +46,7 @@ class Project(Base):
     files = relationship("File", back_populates="project", cascade="all, delete-orphan")
     contexts = relationship("Context", back_populates="project", cascade="all, delete-orphan")
     chat_history = relationship("ChatHistory", back_populates="project", cascade="all, delete-orphan")
+    file_relationships = relationship("FileRelationship", back_populates="project", cascade="all, delete-orphan")
 
 
 class File(Base):
@@ -89,3 +90,22 @@ class ChatHistory(Base):
     
     # Relationships
     project = relationship("Project", back_populates="chat_history")
+
+
+class FileRelationship(Base):
+    __tablename__ = "file_relationships"
+    
+    id = get_uuid_column(primary_key=True)
+    project_id = Column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    source_file_id = Column(String(36), ForeignKey("files.id", ondelete="CASCADE"), nullable=False)
+    source_column = Column(String(255))
+    target_file_id = Column(String(36), ForeignKey("files.id", ondelete="CASCADE"), nullable=False)
+    target_column = Column(String(255))
+    relationship_type = Column(String(50))
+    confidence = Column(String(10))  # Store as string for SQLite compatibility
+    validation_stats = Column(JSON)
+    
+    # Relationships
+    project = relationship("Project", back_populates="file_relationships")
+    source_file = relationship("File", foreign_keys=[source_file_id])
+    target_file = relationship("File", foreign_keys=[target_file_id])
